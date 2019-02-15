@@ -1,3 +1,7 @@
+# BERT for KorQuAD
+This is a fork of the original (Google's) BERT implementation for KorQuAD.
+- https://korquad.github.io/
+
 # BERT
 
 **\*\*\*\*\* New February 7th, 2019: TfHub Module \*\*\*\*\***
