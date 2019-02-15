@@ -21,6 +21,7 @@ from __future__ import print_function
 import collections
 import json
 import math
+import sys
 import os
 import random
 import modeling
@@ -33,29 +34,35 @@ flags = tf.flags
 
 FLAGS = flags.FLAGS
 
-## Required parameters
-flags.DEFINE_string(
-    "bert_config_file", None,
-    "The config json file corresponding to the pre-trained BERT model. "
-    "This specifies the model architecture.")
 
-flags.DEFINE_string("vocab_file", None,
-                    "The vocabulary file that the BERT model was trained on.")
-
-flags.DEFINE_string(
-    "output_dir", None,
-    "The output directory where the model checkpoints will be written.")
-
-## Other parameters
-flags.DEFINE_string("train_file", None,
-                    "SQuAD json for training. E.g., train-v1.1.json")
 
 flags.DEFINE_string(
     "predict_file", None,
     "SQuAD json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
 
 flags.DEFINE_string(
-    "init_checkpoint", None,
+    "output_file", None,
+    "SQuAD json for predictions. E.g., dev-v1.1.json or test-v1.1.json")
+
+flags.DEFINE_string(
+    "output_dir", 'temp',
+    "The output directory where the model checkpoints will be written.")
+
+## Required parameters
+flags.DEFINE_string(
+    "bert_config_file", './data/bert_config.json',
+    "The config json file corresponding to the pre-trained BERT model. "
+    "This specifies the model architecture.")
+
+flags.DEFINE_string("vocab_file", './data/vocab.txt',
+                    "The vocabulary file that the BERT model was trained on.")
+
+## Other parameters
+flags.DEFINE_string("train_file", None,
+                    "SQuAD json for training. E.g., train-v1.1.json")
+
+flags.DEFINE_string(
+    "init_checkpoint", './data/bert-model.ckpt',
     "Initial checkpoint (usually from a pre-trained BERT model).")
 
 flags.DEFINE_bool(
@@ -64,7 +71,7 @@ flags.DEFINE_bool(
     "models and False for cased models.")
 
 flags.DEFINE_integer(
-    "max_seq_length", 384,
+    "max_seq_length", 420,
     "The maximum total input sequence length after WordPiece tokenization. "
     "Sequences longer than this will be truncated, and sequences shorter "
     "than this will be padded.")
@@ -81,7 +88,7 @@ flags.DEFINE_integer(
 
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 
-flags.DEFINE_bool("do_predict", False, "Whether to run eval on the dev set.")
+flags.DEFINE_bool("do_predict", True, "Whether to run eval on the dev set.")
 
 flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
 
@@ -100,7 +107,8 @@ flags.DEFINE_float(
 
 flags.DEFINE_integer("save_checkpoints_steps", 1000,
                      "How often to save the model checkpoint.")
-
+flags.DEFINE_integer("num_checkpoints", 5,
+                     "How many to save the model checkpoint.")
 flags.DEFINE_integer("iterations_per_loop", 1000,
                      "How many steps to make in each estimator call.")
 
@@ -153,10 +161,12 @@ flags.DEFINE_float(
     "null_score_diff_threshold", 0.0,
     "If null_score - best_non_null is greater than the threshold predict null.")
 
+flags.DEFINE_integer(
+    "gpu", 0,
+    "If null_score - best_non_null is greater than the threshold predict null.")
 
 class SquadExample(object):
   """A single training/test example for simple sequence classification.
-
      For examples without an answer, the start and end position are -1.
   """
 
@@ -269,6 +279,7 @@ def read_squad_examples(input_file, is_training):
           if not is_impossible:
             answer = qa["answers"][0]
             orig_answer_text = answer["text"]
+#             print(orig_answer_text)#
             answer_offset = answer["answer_start"]
             answer_length = len(orig_answer_text)
             start_position = char_to_word_offset[answer_offset]
@@ -452,7 +463,6 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
           tf.logging.info("end_position: %d" % (end_position))
           tf.logging.info(
               "answer: %s" % (tokenization.printable_text(answer_text)))
-
       feature = InputFeatures(
           unique_id=unique_id,
           example_index=example_index,
@@ -594,7 +604,6 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
   def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
     """The `model_fn` for TPUEstimator."""
-
     tf.logging.info("*** Features ***")
     for name in sorted(features.keys()):
       tf.logging.info("  name = %s, shape = %s" % (name, features[name].shape))
@@ -661,11 +670,12 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
       train_op = optimization.create_optimizer(
           total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu)
-
+      logging_hook = tf.train.LoggingTensorHook({"loss": total_loss}, every_n_iter=100)
       output_spec = tf.contrib.tpu.TPUEstimatorSpec(
           mode=mode,
           loss=total_loss,
           train_op=train_op,
+          training_hooks=[logging_hook],
           scaffold_fn=scaffold_fn)
     elif mode == tf.estimator.ModeKeys.PREDICT:
       predictions = {
@@ -822,7 +832,6 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         prelim_predictions,
         key=lambda x: (x.start_logit + x.end_logit),
         reverse=True)
-
     _NbestPrediction = collections.namedtuple(  # pylint: disable=invalid-name
         "NbestPrediction", ["text", "start_logit", "end_logit"])
 
@@ -1096,9 +1105,6 @@ class FeatureWriter(object):
 
 def validate_flags_or_throw(bert_config):
   """Validate the input FLAGS or throw an exception."""
-  tokenization.validate_case_matches_checkpoint(FLAGS.do_lower_case,
-                                                FLAGS.init_checkpoint)
-
   if not FLAGS.do_train and not FLAGS.do_predict:
     raise ValueError("At least one of `do_train` or `do_predict` must be True.")
 
@@ -1124,6 +1130,9 @@ def validate_flags_or_throw(bert_config):
 
 
 def main(_):
+  os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
+  os.environ["CUDA_VISIBLE_DEVICES"]=str(FLAGS.gpu)
+
   tf.logging.set_verbosity(tf.logging.INFO)
 
   bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
@@ -1145,6 +1154,7 @@ def main(_):
       cluster=tpu_cluster_resolver,
       master=FLAGS.master,
       model_dir=FLAGS.output_dir,
+      keep_checkpoint_max=FLAGS.num_checkpoints, #checkpoint
       save_checkpoints_steps=FLAGS.save_checkpoints_steps,
       tpu_config=tf.contrib.tpu.TPUConfig(
           iterations_per_loop=FLAGS.iterations_per_loop,
@@ -1190,6 +1200,7 @@ def main(_):
     train_writer = FeatureWriter(
         filename=os.path.join(FLAGS.output_dir, "train.tf_record"),
         is_training=True)
+
     convert_examples_to_features(
         examples=train_examples,
         tokenizer=tokenizer,
@@ -1266,7 +1277,8 @@ def main(_):
               start_logits=start_logits,
               end_logits=end_logits))
 
-    output_prediction_file = os.path.join(FLAGS.output_dir, "predictions.json")
+
+    output_prediction_file = os.path.join(FLAGS.output_file)
     output_nbest_file = os.path.join(FLAGS.output_dir, "nbest_predictions.json")
     output_null_log_odds_file = os.path.join(FLAGS.output_dir, "null_odds.json")
 
@@ -1277,7 +1289,9 @@ def main(_):
 
 
 if __name__ == "__main__":
-  flags.mark_flag_as_required("vocab_file")
-  flags.mark_flag_as_required("bert_config_file")
-  flags.mark_flag_as_required("output_dir")
+  # flags.mark_flag_as_required("vocab_file")
+  # flags.mark_flag_as_required("bert_config_file")
+  # flags.mark_flag_as_required("output_dir")
+  FLAGS.predict_file = sys.argv[1]
+  FLAGS.output_file = sys.argv[2]
   tf.app.run()

@@ -170,9 +170,11 @@ class FullTokenizer(object):
   def tokenize(self, text):
     split_tokens = []
     for token in self.basic_tokenizer.tokenize(text):
+#       print(token)
       for sub_token in self.wordpiece_tokenizer.tokenize(token):
         split_tokens.append(sub_token)
-
+#     print(split_tokens)
+#     input('')
     return split_tokens
 
   def convert_tokens_to_ids(self, tokens):
@@ -197,7 +199,6 @@ class BasicTokenizer(object):
     """Tokenizes a piece of text."""
     text = convert_to_unicode(text)
     text = self._clean_text(text)
-
     # This was added on November 1st, 2018 for the multilingual and Chinese
     # models. This is also applied to the English models now, but it doesn't
     # matter since the English models were not trained on any Chinese data
@@ -205,7 +206,6 @@ class BasicTokenizer(object):
     # characters in the vocabulary because Wikipedia does have some Chinese
     # words in the English Wikipedia.).
     text = self._tokenize_chinese_chars(text)
-
     orig_tokens = whitespace_tokenize(text)
     split_tokens = []
     for token in orig_tokens:
@@ -213,19 +213,44 @@ class BasicTokenizer(object):
         token = token.lower()
         token = self._run_strip_accents(token)
       split_tokens.extend(self._run_split_on_punc(token))
-
+#       print(split_tokens)
     output_tokens = whitespace_tokenize(" ".join(split_tokens))
+#     print(output_tokens)
     return output_tokens
+
+  def _isKorean(self,text):
+    hangul = re.compile('[\u3131-\u3163\uac00-\ud7a3]+')
+    result = hangul.findall(text)
+    return bool(result)
 
   def _run_strip_accents(self, text):
     """Strips accents from a piece of text."""
+
+    # Skip using _run_strip_accents() for Korean substrings, since normalizing
+    # Korean characters with NFD and joining them back results in a seemingly
+    # same but different text, which causes a bug.
+    to_char = chr if six.PY3 else unichr
+    korean = "%s-%s%s-%s" % (to_char(0xac00), to_char(0xd7a3),
+                             to_char(0x3131), to_char(0x3163))
+    if re.search("[%s]+" % korean, text):
+      return "".join(
+        substr if re.search("^[%s]+$" % korean, substr)
+        else self._run_strip_accents(substr)
+        for substr in re.findall("[%s]+|[^%s]+" % (korean, korean), text))
+
+      #     if not self._isKorean(text):
+    #       text = unicodedata.normalize("NFD", text)
     text = unicodedata.normalize("NFD", text)
     output = []
+    #     print(output)#
     for char in text:
       cat = unicodedata.category(char)
       if cat == "Mn":
         continue
       output.append(char)
+    #     print(output)#
+    #     print("".join(output))
+    #     input('')#
     return "".join(output)
 
   def _run_split_on_punc(self, text):
@@ -247,7 +272,7 @@ class BasicTokenizer(object):
       i += 1
 
     return ["".join(x) for x in output]
-
+  
   def _tokenize_chinese_chars(self, text):
     """Adds whitespace around any CJK character."""
     output = []
@@ -304,6 +329,11 @@ class WordpieceTokenizer(object):
     self.vocab = vocab
     self.unk_token = unk_token
     self.max_input_chars_per_word = max_input_chars_per_word
+  
+  def _isKorean(self,text): 
+    hangul = re.compile('[\u3131-\u3163\uac00-\ud7a3]+')
+    result = hangul.findall(text)
+    return bool(result)
 
   def tokenize(self, text):
     """Tokenizes a piece of text into its word pieces.
@@ -322,12 +352,16 @@ class WordpieceTokenizer(object):
     Returns:
       A list of wordpiece tokens.
     """
-
     text = convert_to_unicode(text)
-
+#     print('-'*10)
+#     print(list(text.encode("UTF-8").decode()))
+#     print(text)
     output_tokens = []
     for token in whitespace_tokenize(text):
+#       print(token)
       chars = list(token)
+#       print(chars)
+#       input('')
       if len(chars) > self.max_input_chars_per_word:
         output_tokens.append(self.unk_token)
         continue
@@ -341,7 +375,11 @@ class WordpieceTokenizer(object):
         while start < end:
           substr = "".join(chars[start:end])
           if start > 0:
+#             if self._isKorean(substr): ##revision###
+#               substr = substr
+#             else:
             substr = "##" + substr
+            
           if substr in self.vocab:
             cur_substr = substr
             break
