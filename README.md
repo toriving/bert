@@ -2,9 +2,6 @@
 This is a fork of the original (Google's) BERT implementation for KorQuAD.
 - https://korquad.github.io/  
 
-
-Multi-gpu Ver.
-- https://github.com/lambdal/bert  
 # BERT
 
 **\*\*\*\*\* New February 7th, 2019: TfHub Module \*\*\*\*\***
